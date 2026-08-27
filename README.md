@@ -249,8 +249,9 @@ detector**:
 | `AI-DEFAULT-DENY` | default deny | no policy grants this role this action |
 
 Detection records indicators against the source document and raises the
-incident severity to HIGH. Delete the detector entirely and the export is still
-denied.
+incident severity to HIGH. Stub every detector to return nothing and the export
+is still denied; all that is lost is the severity escalation and the pointer to
+the source document.
 
 ### 3. Dual authorization misconfiguration
 
