@@ -78,8 +78,8 @@ triage; authorization provides containment.
 ## Quick start
 
 ```bash
-git clone https://github.com/kenydebo/keny-ai-agent-security-reference-architecture.git
-cd keny-ai-agent-security-reference-architecture
+git clone https://github.com/kenydebo/reference-architecture-ai-agent-security.git
+cd reference-architecture-ai-agent-security
 
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
