@@ -19,4 +19,3 @@ packages = ["agents", "assurance", "forensics", "gateway", "scenarios"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q"
