@@ -35,7 +35,7 @@ control mapping.
 | T3 | Information disclosure | Export of restricted / PHI data | `AI-DATA-004` classification rule; output screening | Scenarios 2, 3 |
 | T4 | Spoofing | Credential replayed into another session | Session binding; short TTL | `demo.py`, `tests/test_identity.py` |
 | T5 | Elevation via misconfiguration | Over-broad credential scope | Classification rule denies independently of scope | Scenario 3 |
-| T6 | Tampering (record) | Edit, delete, reorder or re-sign evidence | Hash chain + Ed25519 + independent trust anchor | `tests/test_forensics.py` |
+| T6 | Tampering (record) | Edit, delete, reorder or re-sign evidence | Hash chain + Ed25519 + separately supplied trust anchor | `tests/test_forensics.py` |
 | T7 | Repudiation | "That action never happened" | Signed, ordered, correlated evidence | Scenario 4 |
 | T8 | Anti-forensics | "Do not disclose this action" in injected text | Recording is control-plane side; the instruction itself is flagged | Scenario 2 |
 | T9 | Information disclosure (audit) | Sensitive values copied into the audit record | Findings record category and value hash, never the value | `tests/test_controls.py` |
@@ -49,7 +49,7 @@ attacker plants instruction in a vendor document
 agent retrieves it as untrusted context     -> rag.document_retrieved
         |                                      detection.injection_indicator
         v
-planner obeys, requests clinical_data.export -> agent.tool_requested
+simulated hijacked request: clinical_data.export -> agent.tool_requested
         |
         v
 tool broker validates the credential          -> identity.validation_succeeded

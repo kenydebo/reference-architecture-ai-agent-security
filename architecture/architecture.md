@@ -72,17 +72,36 @@ control plane, outside the agent's trust boundary.
 
 ### Why layering matters (T7)
 
-Scenario 3 is the demonstration. The credential's scope is misconfigured to
-include `clinical_data.export`, so the least-privilege control does not fire.
-The classification rule denies independently. The authorization engine collects
-**every** matched deny reason rather than returning on the first, so evidence
-shows which controls fired and which did not.
+Scenario 3 is the demonstration, and it simulates **two** independent
+authorization failures at once: an overbroad credential scope *and* an overbroad
+role grant. With both ordinary controls permitting the action, only the
+classification rule denies.
+
+The authorization engine records a verdict for **every** control, passes
+included, not just the rules that denied. Recording passes is what makes the
+claim auditable: proving one rule was load-bearing requires evidence that the
+others would have permitted the action. `AC-05` requires exactly that evidence,
+and reports `NOT_TESTED` when any other control would have contained the request
+anyway.
+
+The scenario also evaluates the counterfactual directly - the same request
+against a policy with the classification rule removed is authorized - so
+"AI-DATA-004 is load-bearing here" is a tested statement rather than prose.
 
 ## 4. Evidence integrity
 
 Each entry carries the SHA-256 hash of the previous entry and an Ed25519
 signature over its own hash. Verification recomputes the chain and checks every
-signature against a **trust anchor supplied by the caller**.
+signature against a **trust anchor supplied by the caller**, rather than
+deriving trust from the evidence itself.
+
+**Scope of that property.** The demo simulates verifier custody of the trust
+anchor: it is held apart from the ledger contents, but written under the same
+`run/` directory. This is not a separate trust domain and the project does not
+claim one. The interface demonstrates separation of verification trust from
+evidence contents; it does not implement an external witness, HSM, timestamp
+authority, or independent evidence custodian. A production deployment would
+hold the verifier trust anchor in a separate trust domain.
 
 Detected:
 

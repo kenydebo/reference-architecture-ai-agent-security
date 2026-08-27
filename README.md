@@ -114,8 +114,9 @@ redacts before it reaches the agent.
 ### 2. Indirect prompt injection
 
 A retrieved vendor appendix carries an embedded instruction to export a
-restricted patient dataset and not to disclose it. The agent obeys and requests
-`clinical_data.export`.
+restricted patient dataset and not to disclose it. The scenario then
+deterministically issues the `clinical_data.export` request that a successfully
+hijacked agent would make.
 
 Three independent controls deny the request, and **none of them is the
 detector**:
@@ -130,14 +131,35 @@ Detection records indicators against the source document and raises the
 incident severity to HIGH. Delete the detector entirely and the export is still
 denied.
 
-### 3. Misconfigured / overprivileged credential
+### 3. Dual authorization misconfiguration
 
-The research agent is deliberately minted a credential whose scope wrongly
-includes `clinical_data.export`. The least-privilege control therefore **does
-not** deny - the action is legitimately in scope. The classification rule denies
-it anyway.
+Defense in depth, demonstrated rather than asserted. **Two** independent
+authorization failures are simulated at once:
 
-A single misconfigured identity scope does not produce unrestricted access.
+1. the credential scope wrongly includes `clinical_data.export`, so
+   least privilege (`AI-IAM-004`) does not deny;
+2. the role grant for `research_reader` wrongly includes `clinical_data.export`,
+   so explicit authorization does not deny either.
+
+Only the classification rule remains, and it denies:
+
+```
+AI-IAM-004      Capability scope        PASS
+AI-DATA-001     Explicit role grant     PASS
+AI-DATA-004     Data classification     DENY
+Final decision                          DENY
+
+With AI-DATA-004:     DENY
+Without AI-DATA-004:  ALLOW
+```
+
+The counterfactual is **evaluated, not claimed**: the scenario re-runs the same
+request against a policy with the classification rule removed and shows it would
+be authorized. `test_classification_backstop_is_load_bearing_under_dual_misconfiguration`
+asserts both halves.
+
+The misconfigured policy is injected into a scenario-local engine; the reference
+policy configuration is never mutated.
 
 ### 4. Investigation and control validation
 
@@ -165,12 +187,12 @@ misspelled tool name does not satisfy the restricted-data control:
 | AC-02 Session-bound credential | credential/session match, or a rejected replay |
 | AC-03 Least privilege enforced | no ALLOW outside the credential scope |
 | AC-04 Restricted data export prevented | `clinical_data.export` + `restricted_phi` + DENY |
-| AC-05 Classification backstop effective | `AI-DATA-004` denied while scope permitted |
+| AC-05 Classification backstop is load-bearing | scope **and** role grant both permitted, classification denied, nothing executed |
 | AC-06 Injection detection recorded | indicator linked to a retrieved document |
 | AC-07 Incident generated | one incident per enforcement event |
 | AC-08 Sensitive output screened | identifiers detected and redacted |
 | AC-09 Activity reconstructable | correlated user, identity, action, outcome |
-| AC-10 Evidence integrity | verifies against an independent trust anchor |
+| AC-10 Evidence integrity | verifies against a separately supplied trust anchor |
 
 Results are `PASS`, `FAIL`, or `NOT_TESTED`. **A control that was not exercised
 is never reported as passing.** Running a single scenario correctly leaves
@@ -228,16 +250,32 @@ tests/                      positive and negative cases for every control
 ## Design notes
 
 **The planner is deterministic on purpose.** No model is called and no API key
-is required. The security claim is about the enforcement boundary, and that
-boundary evaluates a requested action identically whether it originated from a
-language model, an attacker-controlled planner, or faulty application logic.
+is required. The injection scenario *simulates the action request* a
+successfully hijacked agent would make; it does not observe a model deciding
+anything. No claim is made about whether any particular model would obey the
+poisoned document, about jailbreak resistance, or about prompt-injection
+success rates.
+
+The security claim is about the enforcement boundary, and that boundary
+evaluates a requested action identically whether it originated from a language
+model, an attacker-controlled planner, or faulty application logic. Testing the
+boundary independently of planner behaviour is the point, not a shortcut.
 
 **The Python policy engine is the executable reference.** A production
 deployment would run an external policy decision point - OPA, Cedar, or a cloud
 IAM policy engine. The evaluation input is shaped as a policy input document so
 it maps onto one directly. No external PDP is claimed or shipped here.
 
-**Verification requires a trust anchor.** `verify_ledger()` takes the trusted
-public key as a required argument and the ledger never offers its own key. A
-verifier that read its key from beside the evidence would accept a wholesale
-re-signed history; there is a test for exactly that attack.
+**Verification requires a trust anchor - and what that does and does not mean.**
+`verify_ledger()` takes the trusted public key as a required argument rather
+than deriving trust from the evidence itself, and the ledger never offers its
+own key. A verifier that read its key from beside the evidence would accept a
+wholesale re-signed history; there is a test for exactly that attack.
+
+The demo **simulates** verifier custody: the trust anchor is held apart from the
+ledger contents but is written under the same `run/` directory. That is not a
+separate trust domain. The interface demonstrates separation of verification
+trust from evidence contents; it does **not** implement an external witness,
+HSM, timestamp authority, or independent evidence custodian, and none of those
+are claimed. A production deployment would hold the verifier trust anchor in a
+separate trust domain.
