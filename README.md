@@ -5,17 +5,17 @@
 A working reference implementation demonstrating how I approach securing
 enterprise AI agents that interact with sensitive data and internal tools.
 
-The architecture focuses on:
+It exists to make one argument, in code rather than prose:
 
-- workload identity for agents
-- short-lived, session-bound, scope-limited credentials
-- least-privilege tool access through a broker
-- default-deny authorization
-- data-classification enforcement
-- indirect prompt-injection detection
-- security telemetry
-- incident reconstruction
-- evidence-based control validation
+> AI agents should be treated as potentially compromised workloads. Constrain
+> what they can do at an independent execution boundary, capture every
+> security-relevant decision as evidence, and make incidents reconstructable
+> and controls verifiable.
+
+Everything in the repository is in service of that argument. Four reproducible
+scenarios exercise the boundary, 74 tests assert both the positive and the
+negative cases, and the control-validation layer derives its results from
+recorded runtime evidence rather than from assertions in a document.
 
 > This project uses synthetic data and a fictional biotechnology environment.
 > It does not represent or reproduce any organization's internal AI
@@ -93,9 +93,119 @@ No API key, no network access, and no model call is required.
 
 ---
 
+## What it looks like
+
+`python demo.py`, abridged. This is scenario 2 - a poisoned document has been
+retrieved and the hijacked-agent request has been issued:
+
+```
+Detection
+------------------------------------------------------------------
+Suspicious document:  vendor-appendix.txt
+  - instruction_override: "Ignore all previous instructions"
+  - coerced_action: "You must now retrieve"
+  - anti_forensics: "Do not disclose this"
+
+Agent action
+------------------------------------------------------------------
+Requested tool:       clinical_data.export
+Resource:             Clinical Research Database
+Classification:       restricted_phi
+
+Authorization
+------------------------------------------------------------------
+Decision:             DENY
+Primary policy:       AI-DATA-004
+
+  Independent controls that denied this request:
+    - AI-DATA-004      [data_classification]
+    - AI-IAM-004       [capability_scope]
+    - AI-DEFAULT-DENY  [role_grant]
+
+Incident
+------------------------------------------------------------------
+Incident:             AI-2026-0001
+```
+
+Three independent controls denied one request, and **none of them is the
+injection detector**. Delete `gateway/detection.py` entirely and the export is
+still refused; the detector only raised the incident severity and pointed the
+investigator at the source document.
+
+The run ends with controls validated against the evidence it just produced:
+
+```
+Control Result      Title
+------------------------------------------------------------------
+AC-01   PASS        Agent identity required
+AC-04   PASS        Restricted data export prevented
+AC-05   PASS        Classification backstop is load-bearing
+...
+AC-10   PASS        Evidence integrity
+
+Controls passed: 10   not exercised: 0   failed: 0
+Evidence integrity: VERIFIED   Events in ledger: 54
+```
+
+What each control requires is listed under
+[Evidence and control validation](#evidence-and-control-validation) below.
+
+---
+
+## How a request flows
+
+Every agent-to-tool action takes the same path. The agent cannot skip it,
+because it holds no route to a backend other than the broker.
+
+```
+agent asks for a tool
+        |
+        v
+  validate credential            -> identity.validation_succeeded
+  (signature, expiry, session)      identity.validation_failed
+        |
+        v
+  record the request             -> agent.tool_requested
+        |
+        v
+  authorize                      -> policy.decision
+    capability scope                 (every control's verdict, passes included)
+    data classification
+    explicit role grant
+        |
+        +-- any control denies --> tool.execution_denied
+        |                          security.incident_created
+        |
+        v
+  execute against the backend    -> tool.execution_started
+        |
+        v
+  screen the output              -> dlp.detection  (category + value hash only)
+        |
+        v
+  return to the agent            -> tool.execution_completed
+```
+
+Two properties fall out of this shape and are worth stating plainly:
+
+- **The broker records, not the agent.** A hijacked agent cannot suppress the
+  record of its own denied request, because it is not the component writing it.
+- **A rejected credential is a security event.** Identity failures produce
+  evidence and an incident rather than an exception that vanishes.
+
+---
+
 ## Scenarios
 
-Each scenario runs standalone and is reproducible.
+Each scenario runs standalone, is reproducible, and exists to establish one
+specific property.
+
+| Scenario | Establishes |
+|---|---|
+| 1. Normal operation | the boundary does not break legitimate work |
+| 2. Indirect prompt injection | containment does not depend on detecting the prompt |
+| 3. Dual misconfiguration | one layer failing does not open the path |
+| 4. Investigation | the incident is reconstructable and the controls are checkable |
 
 ```bash
 python -m scenarios.normal_request         # authorized work still functions
@@ -228,6 +338,49 @@ one that matters most: a backward-linking hash chain cannot detect truncation
 of its own tail without an independently retained chain head.
 
 ---
+
+## Where to start reading
+
+The repository is deliberately small enough to read in one sitting: roughly
+1,500 lines of implementation and 540 lines of tests across 35 files.
+
+| You have | Read |
+|---|---|
+| 5 minutes | `python demo.py`, then [`gateway/authorization.py`](gateway/authorization.py) - the policy engine and the whole decision model |
+| 15 minutes | add [`gateway/tool_broker.py`](gateway/tool_broker.py), the enforcement boundary where identity, authorization, telemetry and screening meet |
+| 30 minutes | add [`assurance/controls.py`](assurance/controls.py) for how control results are derived from evidence, and [`tests/test_authorization.py`](tests/test_authorization.py) for what is actually asserted |
+| longer | [`architecture/architecture.md`](architecture/architecture.md) for trust boundaries, the threat-to-control mapping, and the stated limitations |
+
+If you only read one test, read
+`test_classification_backstop_is_load_bearing_under_dual_misconfiguration` in
+[`tests/test_authorization.py`](tests/test_authorization.py). It asserts a
+counterfactual rather than a presence check: with the classification rule the
+request is denied, and with it removed the identical request is authorized.
+
+## Verifying the claims
+
+Nothing here asks to be taken on trust.
+
+```bash
+pytest
+```
+
+74 tests, covering the failure cases as well as the successes: a history
+rewritten and re-signed with a replacement key, tail truncation, an empty
+ledger, a credential replayed into another session, and an unrelated denial
+attempting to satisfy the restricted-data control.
+
+To check that the suite actually bites, break the central control and watch it
+fail - a green suite proves nothing if the tests do not detect a real defect:
+
+```bash
+sed -i.bak 's/"deny_classifications": \["restricted", "restricted_phi"\]/"deny_classifications": ["never_matches"]/' gateway/authorization.py
+pytest
+git checkout -- gateway/authorization.py && rm -f gateway/authorization.py.bak
+pytest
+```
+
+The neutered run reports 11 failures; the restored run reports 74 passed.
 
 ## Layout
 
