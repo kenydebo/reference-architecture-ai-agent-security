@@ -6,14 +6,23 @@ security architecture must not break ordinary work: identity is validated,
 policy is evaluated, the action is authorized, it executes, and the whole
 sequence is recorded as evidence.
 
-This scenario also exercises output screening: the R&D document repository
-returns an excerpt containing a synthetic identifier, which is detected and
-redacted before it reaches the agent.
+The output deliberately separates three distinct things that are easy to
+conflate when reading a transcript:
+
+    Authorization   the security decision
+    Tool execution  whether the brokered call ran, and against what
+    Tool response   the data the mock backend returned
+
+A second call exercises output screening: the document repository stub returns
+an excerpt containing a synthetic identifier, which is detected and redacted
+before it reaches the agent.
+
+All backend responses are fabricated. No system is contacted.
 """
 
 from __future__ import annotations
 
-from scenarios._common import Environment, banner, build_environment, kv, section
+from scenarios._common import Environment, banner, block, build_environment, kv, section
 
 
 def run(env: Environment | None = None, verbose: bool = True) -> dict:
@@ -29,24 +38,42 @@ def run(env: Environment | None = None, verbose: bool = True) -> dict:
         kv("Credential scope", ", ".join(session.claims["scope"]))
 
     search = session.request_tool("clinical.search", purpose="research-summary")
-    summarize = session.request_tool("documents.summarize", purpose="research-summary")
-    session.close()
 
     if verbose:
         section("Authorization")
         kv("Tool", search.tool)
         kv("Policy", search.policy_id)
-        kv("Decision", "ALLOW" if search.status == "completed" else search.status.upper())
-        kv("Result", search.output)
+        kv("Decision", "ALLOW" if search.decision.allowed else "DENY")
+
+        section("Tool execution")
+        kv("Status", search.status.upper())
+        kv("System", search.decision.evaluation_input["resource"]["system"])
+        kv("Classification", search.decision.evaluation_input["resource"]["classification"])
+        kv("Data source", "Synthetic mock backend (no system contacted)")
+
+        section("Tool response")
+        block("Returned", search.output)
+
+    summarize = session.request_tool("documents.summarize", purpose="research-summary")
+    session.close()
+
+    if verbose:
+        section("Authorization")
+        kv("Tool", summarize.tool)
+        kv("Policy", summarize.policy_id)
+        kv("Decision", "ALLOW" if summarize.decision.allowed else "DENY")
 
         section("Output screening")
-        kv("Tool", summarize.tool)
-        kv("Decision", "ALLOW")
         kv("Sensitive findings", len(summarize.dlp_findings))
-        kv("Output redacted", summarize.redacted)
-        kv("Result", summarize.output)
+        kv("Categories", ", ".join(f["category"] for f in summarize.dlp_findings) or "none")
+        kv("Action", "REDACT" if summarize.redacted else "none")
+
+        section("Sanitized tool response")
+        kv("Data source", "Synthetic mock backend (no system contacted)")
+        block("Returned", summarize.output)
 
         print()
+        print("Authorization, execution and returned data are separate concerns.")
         print("Legitimate work continues to function under the security boundary.")
 
     return {"env": env, "session": session, "results": [search, summarize]}

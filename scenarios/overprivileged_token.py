@@ -1,70 +1,135 @@
 """
-Scenario 3 - Misconfigured / overprivileged credential.
+Scenario 3 - Dual authorization misconfiguration / classification backstop.
 
-Defense in depth. The research agent is deliberately minted a credential whose
-capability scope wrongly includes clinical_data.export, as would happen through
-a provisioning mistake or an over-broad role definition.
+Defense in depth, demonstrated rather than asserted.
 
-The least-privilege control therefore does NOT deny: the action is inside the
-credential's scope. The request still fails, because the classification rule
-evaluates the role against the data classification of the target resource and
-denies independently.
+Two independent authorization configuration failures are simulated at once:
 
-The demonstration is that a single misconfigured identity scope does not
-produce unrestricted access.
+  1. The research agent's credential scope wrongly includes
+     clinical_data.export, so the least-privilege control does not deny.
+  2. The role grant for research_reader wrongly includes clinical_data.export,
+     so the explicit-authorization control does not deny either.
+
+With both of the usual controls permitting the action, only the data
+classification rule remains. The resource is restricted_phi and the acting
+role is research_reader, so AI-DATA-004 denies independently.
+
+The scenario computes the counterfactual explicitly: the same request is
+re-evaluated against a policy with the classification rule removed, and it is
+authorized. That is what makes "AI-DATA-004 is the load-bearing control" a
+statement backed by evaluation rather than by prose. The same property is
+asserted in tests/test_authorization.py.
+
+The misconfigured policy is injected into a scenario-local authorization
+engine. The reference policy configuration is never mutated.
 """
 
 from __future__ import annotations
 
-from scenarios._common import Environment, banner, build_environment, kv, section
+from copy import deepcopy
 
-OVERBROAD_SCOPE = ["clinical.search", "documents.summarize", "clinical_data.export"]
+from gateway.authorization import (
+    CONTROL_CAPABILITY_SCOPE,
+    CONTROL_DATA_CLASSIFICATION,
+    CONTROL_ROLE_GRANT,
+    ROLE_GRANTS,
+    AuthorizationEngine,
+)
+from gateway.tool_broker import ToolBroker
+from scenarios._common import Environment, banner, build_environment, kv, rule, section
+
+RESTRICTED_TOOL = "clinical_data.export"
+OVERBROAD_SCOPE = ["clinical.search", "documents.summarize", RESTRICTED_TOOL]
+
+
+def misconfigured_role_grants() -> list[dict]:
+    """A copy of the reference grants with clinical_data.export wrongly added."""
+    grants = deepcopy(ROLE_GRANTS)
+    research = next(g for g in grants if g["role"] == "research_reader")
+    research["allow_tools"] = research["allow_tools"] + [RESTRICTED_TOOL]
+    research["description"] = (
+        "MISCONFIGURED: research agents were incorrectly granted the export action."
+    )
+    return grants
 
 
 def run(env: Environment | None = None, verbose: bool = True) -> dict:
     env = env or build_environment("overprivileged_token")
+
+    # Scenario-local policy: both ordinary controls misconfigured to permit.
+    grants = misconfigured_role_grants()
+    misconfigured = AuthorizationEngine(role_grants=grants)
+    env.broker.authorizer = misconfigured
+
     session = env.new_session("researcher-023", scope_override=OVERBROAD_SCOPE)
 
     if verbose:
-        banner("SCENARIO 3", "Misconfigured / overprivileged credential")
-        kv("Agent", session.agent_id)
-        kv("Role", session.claims["role"])
-        print()
-        print("  Credential scope as minted (misconfigured):")
+        banner("SCENARIO 3", "Dual authorization misconfiguration / classification backstop")
+        kv("Agent", session.agent_id, 26)
+        kv("Role", session.claims["role"], 26)
+
+        section("Misconfiguration 1 - credential scope")
         for cap in session.claims["scope"]:
-            marker = "   <-- should not be here" if cap == "clinical_data.export" else ""
-            print(f"    - {cap}{marker}")
+            mark = "   <-- incorrectly included" if cap == RESTRICTED_TOOL else ""
+            print(f"  {cap}{mark}")
 
-    result = session.request_tool("clinical_data.export", purpose="cross-reference")
+        section("Misconfiguration 2 - role grant")
+        research = next(g for g in grants if g["role"] == "research_reader")
+        for tool in research["allow_tools"]:
+            mark = "   <-- incorrectly granted" if tool == RESTRICTED_TOOL else ""
+            print(f"  research_reader -> {tool}{mark}")
+
+    result = session.request_tool(RESTRICTED_TOOL, purpose="cross-reference")
     session.close()
-
     decision = result.decision
-    scope_denied = decision.denied_by("AI-IAM-004")
-    classification_denied = decision.denied_by("AI-DATA-004")
+
+    # The counterfactual, evaluated rather than claimed: same request, same
+    # misconfigured grants, classification rules removed.
+    without_classification = AuthorizationEngine(
+        role_grants=grants, classification_rules=[]
+    ).evaluate(session.claims, RESTRICTED_TOOL, "cross-reference")
+
+    scope_ok = decision.control_passed(CONTROL_CAPABILITY_SCOPE)
+    grant_ok = decision.control_passed(CONTROL_ROLE_GRANT)
+    classification_denied = not decision.control_passed(CONTROL_DATA_CLASSIFICATION)
+    load_bearing = scope_ok and grant_ok and classification_denied and without_classification.allowed
 
     if verbose:
-        section("Control-by-control outcome")
-        kv("AI-IAM-004 least privilege", "did not deny (action is in scope)" if not scope_denied else "DENIED", 30)
-        kv("AI-DATA-004 classification", "DENIED" if classification_denied else "did not deny", 30)
-        print()
-        for d in decision.deny_reasons:
-            print(f"  - {d.policy_id} [{d.control}]")
-            print(f"    {d.reason}")
+        section("Authorization evaluation")
+        for c in decision.control_results:
+            label = {
+                CONTROL_CAPABILITY_SCOPE: "Capability scope",
+                CONTROL_DATA_CLASSIFICATION: "Data classification",
+                CONTROL_ROLE_GRANT: "Explicit role grant",
+            }[c.control]
+            policy = c.policy_id or "-"
+            print(f"  {policy:<16}{label:<24}{c.result}")
 
-        section("Result")
-        kv("Decision", "DENY" if result.status == "denied" else result.status.upper(), 30)
-        kv("Incident", result.incident_id, 30)
-        kv("Defense in depth", "PASS" if classification_denied and not scope_denied else "NOT DEMONSTRATED", 30)
         print()
-        print("The capability-scope control was defeated by misconfiguration.")
-        print("The classification control contained the action on its own.")
+        kv("Resource classification", decision.evaluation_input["resource"]["classification"], 26)
+        kv("Final decision", "DENY" if result.status == "denied" else result.status.upper(), 26)
+        kv("Executed", "no", 26)
+        kv("Incident", result.incident_id, 26)
+
+        section("Counterfactual (evaluated, not asserted)")
+        kv("With AI-DATA-004", "DENY" if not decision.allowed else "ALLOW", 26)
+        kv("Without AI-DATA-004", "ALLOW" if without_classification.allowed else "DENY", 26)
+        print()
+        kv("Defense in depth", "PASS" if load_bearing else "NOT DEMONSTRATED", 26)
+        print()
+        print("Both ordinary authorization controls were misconfigured to permit")
+        print("this action. The data-classification policy is the load-bearing")
+        print("backstop: remove it and the same request is authorized.")
 
     return {
         "env": env,
         "session": session,
         "result": result,
-        "scope_denied": scope_denied,
+        "scope_passed": scope_ok,
+        "role_grant_passed": grant_ok,
         "classification_denied": classification_denied,
+        "allowed_without_classification": without_classification.allowed,
+        "load_bearing": load_bearing,
     }
 
 

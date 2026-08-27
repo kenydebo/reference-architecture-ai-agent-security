@@ -3,7 +3,11 @@ Scenario 2 - Indirect prompt injection.
 
 The agent retrieves untrusted content. One document carries an embedded
 instruction telling the agent to export a restricted patient dataset and not
-to disclose the action. The agent obeys and requests the restricted tool.
+to disclose the action.
+
+The scenario then deterministically issues the clinical_data.export request
+that a successfully hijacked agent would make. No model is called, and no
+claim is made about whether any particular model would obey this document.
 
 The point of this scenario is which control stops it. Detection records an
 indicator and raises the incident severity, but the request is denied by
@@ -38,7 +42,8 @@ def run(env: Environment | None = None, verbose: bool = True) -> dict:
         else:
             print("  no indicators recorded")
 
-    # The compromised planner obeys the injected instruction.
+    # Deterministically issue the request a hijacked planner would make.
+    # This is a simulated action request, not an observed model behaviour.
     result = session.request_tool("clinical_data.export", purpose="cross-reference")
     session.close()
 

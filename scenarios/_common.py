@@ -20,7 +20,13 @@ WIDTH = 66
 
 @dataclass
 class Environment:
-    """A gateway, its evidence ledger, and the independently held trust key."""
+    """A gateway, its evidence ledger, and the verifier's trust anchor.
+
+    The demo simulates verifier custody of the trust anchor by holding it
+    apart from the ledger contents. It is written under the same run/
+    directory for convenience: this is not a separate trust domain, and the
+    project does not claim one.
+    """
 
     ledger: EvidenceLedger
     identity: IdentityProvider
@@ -75,3 +81,11 @@ def section(title: str) -> None:
 
 def kv(label: str, value, width: int = 22) -> None:
     print(f"{label + ':':<{width}}{value}")
+
+
+def block(label: str, text: str, width: int = 22) -> None:
+    """Print a possibly multi-line value aligned under its label."""
+    lines = str(text).splitlines() or [""]
+    print(f"{label + ':':<{width}}{lines[0]}")
+    for line in lines[1:]:
+        print(f"{'':<{width}}{line}")

@@ -5,7 +5,7 @@ AI Agent Security Reference Architecture - end-to-end demonstration.
 
 Runs the four scenarios against a single shared evidence ledger, then validates
 every control against the accumulated evidence and verifies that evidence
-against an independently held trust anchor.
+against a trust anchor supplied separately from the evidence.
 
 No network access, no API key, and no model call is required.
 """
