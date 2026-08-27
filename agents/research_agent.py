@@ -109,7 +109,13 @@ class ResearchAgentSession:
         return documents
 
     def request_tool(self, tool: str, purpose: str, args: dict | None = None) -> ToolResult:
-        """Ask the broker to perform an action. The agent cannot bypass this."""
+        """Ask the broker to perform an action.
+
+        Every agent path in this project goes through the broker. That is a
+        routing property of this code, not an enforced one: production
+        deployment needs process or network isolation so the agent runtime
+        cannot reach a tool backend directly.
+        """
         return self.broker.invoke(
             session_id=self.session_id,
             credential=self.credential,

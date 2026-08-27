@@ -21,7 +21,9 @@ statement backed by evaluation rather than by prose. The same property is
 asserted in tests/test_authorization.py.
 
 The misconfigured policy is injected into a scenario-local authorization
-engine. The reference policy configuration is never mutated.
+engine bound to a scenario-local broker. Neither the reference policy
+configuration nor the shared broker is mutated, so no scenario that runs after
+this one evaluates against the misconfiguration.
 """
 
 from __future__ import annotations
@@ -57,11 +59,15 @@ def run(env: Environment | None = None, verbose: bool = True) -> dict:
     env = env or build_environment("overprivileged_token")
 
     # Scenario-local policy: both ordinary controls misconfigured to permit.
+    # The misconfigured engine is bound to a scenario-local broker; the shared
+    # broker and the reference configuration are never mutated.
     grants = misconfigured_role_grants()
     misconfigured = AuthorizationEngine(role_grants=grants)
-    env.broker.authorizer = misconfigured
+    broker = ToolBroker(env.ledger, env.identity, misconfigured)
 
-    session = env.new_session("researcher-023", scope_override=OVERBROAD_SCOPE)
+    session = env.new_session(
+        "researcher-023", broker=broker, scope_override=OVERBROAD_SCOPE
+    )
 
     if verbose:
         banner("SCENARIO 3", "Dual authorization misconfiguration / classification backstop")

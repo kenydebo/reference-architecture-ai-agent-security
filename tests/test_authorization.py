@@ -43,7 +43,7 @@ def test_ops_role_is_allowed_its_own_tools(authorizer):
 def test_restricted_export_is_denied_with_normal_scope(authorizer):
     d = authorizer.evaluate(claims_for(scope=RESEARCH_SCOPE), "clinical_data.export", "x")
     assert d.allowed is False
-    # Two independent controls deny this request.
+    # Three independent controls deny this request.
     assert d.denied_by("AI-DATA-004")
     assert d.denied_by("AI-IAM-004")
 

@@ -66,7 +66,7 @@ control plane, outside the agent's trust boundary.
 | T3 | Excessive agent privilege | Scope-limited credentials; explicit role grants | Scope recorded in every decision | `agent.session_created`, `policy.decision` |
 | T4 | Unauthorized tool invocation | Default-deny ABAC; deny precedence | Every decision recorded | `policy.decision`, `tool.execution_denied` |
 | T5 | Sensitive-data exfiltration | Classification rules (`AI-DATA-004`); output screening | DLP findings on tool output | `dlp.detection` |
-| T6 | Credential misuse / replay | Session binding; short TTL; no static credentials | Rejection recorded, incident raised | `identity.validation_failed` |
+| T6 | Credential misuse / cross-session replay | Session binding; short TTL; no static credentials (reuse inside the session it was minted for is not prevented) | Rejection recorded, incident raised | `identity.validation_failed` |
 | T7 | Policy misconfiguration | Layered controls: classification denies where scope does not | Backstop control (AC-05) | `policy.decision.matched_deny_policies` |
 | T8 | Missing or altered telemetry | Recording is control-plane side; hash chain + signature | Independent verification | `verify_ledger()` |
 

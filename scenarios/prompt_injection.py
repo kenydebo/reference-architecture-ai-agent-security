@@ -11,9 +11,10 @@ claim is made about whether any particular model would obey this document.
 
 The point of this scenario is which control stops it. Detection records an
 indicator and raises the incident severity, but the request is denied by
-authorization: the export action is outside the credential's capability scope
-AND the resource is PHI-classified for this role. Two independent controls
-deny the same request, and neither of them is the detector.
+authorization: the export action is outside the credential's capability scope,
+no role grant permits it, AND the resource is PHI-classified for this role.
+Three independent controls deny the same request, and none of them is the
+detector.
 """
 
 from __future__ import annotations

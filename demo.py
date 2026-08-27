@@ -59,9 +59,9 @@ def main() -> None:
     env = build_environment("demo")
 
     normal = run_normal(env)
-    run_injection(env)
+    injection = run_injection(env)
     run_overprivileged(env)
-    run_investigation(env)
+    run_investigation(env, produced=injection)
     demonstrate_credential_misuse(env, normal["session"])
 
     session_ids = sorted({e["session_id"] for e in env.ledger.entries()})

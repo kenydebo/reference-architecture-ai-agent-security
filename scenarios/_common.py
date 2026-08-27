@@ -34,9 +34,17 @@ class Environment:
     trust_public_key: bytes
     run_dir: Path
 
-    def new_session(self, user_id: str, **kwargs) -> ResearchAgentSession:
+    def new_session(
+        self, user_id: str, broker: ToolBroker | None = None, **kwargs
+    ) -> ResearchAgentSession:
+        """Start a session against the shared broker, or a scenario-local one.
+
+        A scenario that needs a deliberately misconfigured policy binds its own
+        broker here rather than mutating the shared one, so no scenario that
+        runs afterwards inherits the misconfiguration.
+        """
         return ResearchAgentSession(
-            self.ledger, self.identity, self.broker, user_id, **kwargs
+            self.ledger, self.identity, broker or self.broker, user_id, **kwargs
         )
 
 

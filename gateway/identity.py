@@ -101,12 +101,24 @@ class IdentityProvider:
         Raises IdentityError with a specific reason on every failure path so
         the caller can record it as evidence.
         """
+        # Every malformed input must leave by the IdentityError path. An
+        # uncaught exception here would escape the broker before it can record
+        # the attempt, and an unrecorded attempt is indistinguishable from no
+        # attempt at all.
+        if not isinstance(credential, str):
+            raise IdentityError("malformed", "credential is not a string")
+
         try:
             body, tag = credential.rsplit(".", 1)
-        except (ValueError, AttributeError):
+        except ValueError:
             raise IdentityError("malformed", "credential is not well-formed")
 
-        expected = hmac.new(self._secret, body.encode("ascii"), hashlib.sha256).hexdigest()
+        try:
+            body_bytes = body.encode("ascii")
+        except UnicodeEncodeError:
+            raise IdentityError("malformed", "credential contains non-ASCII characters")
+
+        expected = hmac.new(self._secret, body_bytes, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(tag, expected):
             raise IdentityError("bad_signature", "credential signature is invalid")
 

@@ -13,9 +13,15 @@ It exists to make one argument, in code rather than prose:
 > and controls verifiable.
 
 Everything in the repository is in service of that argument. Four reproducible
-scenarios exercise the boundary, 74 tests assert both the positive and the
+scenarios exercise the boundary, the test suite asserts both positive and
 negative cases, and the control-validation layer derives its results from
 recorded runtime evidence rather than from assertions in a document.
+
+This is intentionally a small, executable architectural reference for review
+and discussion, not a production-ready security product. It exercises
+representative controls and failure paths to show how the pattern works.
+Exhaustive parser hardening, malformed-input coverage, infrastructure
+integration, and production operations are deliberately outside its scope.
 
 > This project uses synthetic data and a fictional biotechnology environment.
 > It does not represent or reproduce any organization's internal AI
@@ -128,9 +134,10 @@ Incident:             AI-2026-0001
 ```
 
 Three independent controls denied one request, and **none of them is the
-injection detector**. Delete `gateway/detection.py` entirely and the export is
-still refused; the detector only raised the incident severity and pointed the
-investigator at the source document.
+injection detector**. Stub every detector in `gateway/detection.py` to return
+nothing and the export is still refused; the detector only raised the incident
+severity and pointed the investigator at the source document. (Deleting the
+module breaks the imports rather than proving the point.)
 
 The run ends with controls validated against the evidence it just produced:
 
@@ -144,7 +151,7 @@ AC-05   PASS        Classification backstop is load-bearing
 AC-10   PASS        Evidence integrity
 
 Controls passed: 10   not exercised: 0   failed: 0
-Evidence integrity: VERIFIED   Events in ledger: 54
+Evidence integrity: VERIFIED
 ```
 
 What each control requires is listed under
@@ -154,8 +161,10 @@ What each control requires is listed under
 
 ## How a request flows
 
-Every agent-to-tool action takes the same path. The agent cannot skip it,
-because it holds no route to a backend other than the broker.
+Every agent-to-tool action implemented in this project takes the same path.
+That is a routing property of this reference code. A production deployment
+would enforce it with process or network isolation so the agent runtime could
+not reach a backend directly.
 
 ```
 agent asks for a tool
@@ -188,10 +197,12 @@ agent asks for a tool
 
 Two properties fall out of this shape and are worth stating plainly:
 
-- **The broker records, not the agent.** A hijacked agent cannot suppress the
-  record of its own denied request, because it is not the component writing it.
-- **A rejected credential is a security event.** Identity failures produce
-  evidence and an incident rather than an exception that vanishes.
+- **The broker records, not the agent.** In the demonstrated flow, the
+  simulated compromised agent is not the component recording its own denied
+  request.
+- **A rejected credential is a security event.** The exercised credential
+  failures produce evidence and an incident rather than disappearing as an
+  unrecorded exception.
 
 ---
 
@@ -284,8 +295,9 @@ that same evidence.
 ## Evidence and control validation
 
 Security decisions are recorded at the moment of enforcement by the gateway,
-not by the agent, so a hijacked agent cannot suppress the record of its own
-denied request. The ledger is hash-chained and Ed25519-signed.
+not by the agent. In this demonstrated flow, the simulated compromised agent
+does not control the recording path. The ledger is hash-chained and
+Ed25519-signed.
 
 Control assertions are validated against that evidence rather than asserted.
 Each control inspects the evidence **specific to it** - a denial of a
@@ -330,6 +342,7 @@ control is exercised.
   effectiveness - no model is called
 - reproduction of any organization's internal AI architecture
 - production scale
+- exhaustive malformed-input, parser-hardening, or fuzzing coverage
 - any real clinical, patient, or proprietary data
 
 Known limitations are stated in
@@ -341,10 +354,9 @@ of its own tail without an independently retained chain head.
 
 ## Where to start reading
 
-35 files. Around 1,600 lines of implementation logic and 625 lines of test
-logic, plus roughly 500 lines of docstrings that carry the security reasoning
-rather than restating the code. Small enough to read properly, and the reading
-order below is the one I would suggest.
+The repository is intentionally small enough to read properly. Its docstrings
+carry the security reasoning rather than merely restating the code, and the
+reading order below is the one I would suggest.
 
 | You have | Read |
 |---|---|
@@ -367,7 +379,7 @@ Nothing here asks to be taken on trust.
 pytest
 ```
 
-74 tests, covering the failure cases as well as the successes: a history
+The suite covers representative failure cases as well as successes: a history
 rewritten and re-signed with a replacement key, tail truncation, an empty
 ledger, a credential replayed into another session, and an unrelated denial
 attempting to satisfy the restricted-data control.
@@ -382,7 +394,7 @@ git checkout -- gateway/authorization.py && rm -f gateway/authorization.py.bak
 pytest
 ```
 
-The neutered run reports 11 failures; the restored run reports 74 passed.
+The neutered run reports failures; the restored run returns to green.
 
 ## Layout
 

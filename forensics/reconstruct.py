@@ -92,13 +92,31 @@ def reconstruct(ledger: EvidenceLedger, session_id: str) -> Reconstruction:
         e["payload"]["tool"]: e for e in events if e["event_type"] == "tool.execution_completed"
     }
 
+    # Pair by the broker's request id where it is present. Position and tool
+    # name are only sound while one session issues one request at a time.
+    decisions_by_request = {
+        d["payload"]["request_id"]: d for d in decisions if "request_id" in d["payload"]
+    }
+    completions_by_request = {
+        e["payload"]["request_id"]: e
+        for e in events
+        if e["event_type"] == "tool.execution_completed" and "request_id" in e["payload"]
+    }
+
     attempts: list[ToolAttempt] = []
     for i, req in enumerate(requests):
-        dec = decisions[i] if i < len(decisions) else None
+        request_id = req["payload"].get("request_id")
+        dec = decisions_by_request.get(request_id) if request_id else None
+        if dec is None:
+            dec = decisions[i] if i < len(decisions) else None
         if dec is None:
             continue
         p = dec["payload"]
-        completion = completions.get(p["tool"])
+        completion = (
+            completions_by_request.get(request_id)
+            if request_id
+            else completions.get(p["tool"])
+        )
         attempts.append(
             ToolAttempt(
                 tool=p["tool"],

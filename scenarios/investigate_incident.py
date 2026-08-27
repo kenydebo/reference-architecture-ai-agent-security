@@ -20,9 +20,12 @@ from scenarios._common import Environment, banner, build_environment, kv, rule, 
 from scenarios.prompt_injection import run as run_injection
 
 
-def run(env: Environment | None = None, verbose: bool = True) -> dict:
+def run(env: Environment | None = None, verbose: bool = True,
+        produced: dict | None = None) -> dict:
     env = env or build_environment("investigate_incident")
-    produced = run_injection(env=env, verbose=False)
+    # Investigate the incident the injection scenario already produced. Only
+    # create one when this scenario is run standalone.
+    produced = produced if produced is not None else run_injection(env=env, verbose=False)
     session = produced["session"]
 
     if verbose:

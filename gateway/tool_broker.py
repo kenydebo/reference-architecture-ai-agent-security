@@ -20,6 +20,8 @@ Order of enforcement for every invocation:
 
 from __future__ import annotations
 
+import uuid
+
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -117,6 +119,10 @@ class ToolBroker:
         args: dict[str, Any] | None = None,
     ) -> ToolResult:
         args = args or {}
+        # Correlates every event this invocation emits. Pairing events by
+        # position or by tool name is only sound while one session issues one
+        # request at a time; an explicit id does not depend on that.
+        request_id = uuid.uuid4().hex[:12]
 
         # --- 1. Identity -------------------------------------------------
         try:
@@ -129,11 +135,13 @@ class ToolBroker:
                 session_id,
                 "identity.validation_failed",
                 {"component": "gateway.identity"},
-                {"reason": exc.reason, "detail": exc.message, "requested_tool": tool},
+                {"request_id": request_id, "reason": exc.reason, "detail": exc.message,
+                 "requested_tool": tool},
             )
             incident_id = self._raise_incident(
                 session_id,
                 tool=tool,
+                request_id=request_id,
                 severity="MEDIUM",
                 title="Agent presented a credential that failed validation",
                 detail={"identity_failure_reason": exc.reason},
@@ -150,6 +158,7 @@ class ToolBroker:
             "identity.validation_succeeded",
             {"component": "gateway.identity"},
             {
+                "request_id": request_id,
                 "agent_id": claims["agent_id"],
                 "spiffe_id": claims["sub"],
                 "role": claims["role"],
@@ -163,7 +172,7 @@ class ToolBroker:
             session_id,
             "agent.tool_requested",
             {"agent": claims["agent_id"]},
-            {"tool": tool, "purpose": purpose, "args": args},
+            {"request_id": request_id, "tool": tool, "purpose": purpose, "args": args},
         )
 
         # --- 3. Authorize ------------------------------------------------
@@ -174,6 +183,7 @@ class ToolBroker:
             "policy.decision",
             {"component": "gateway.authorization"},
             {
+                "request_id": request_id,
                 "tool": tool,
                 "decision": "ALLOW" if decision.allowed else "DENY",
                 "policy_id": decision.policy_id,
@@ -199,6 +209,7 @@ class ToolBroker:
                 "tool.execution_denied",
                 {"component": "gateway.tool_broker"},
                 {
+                    "request_id": request_id,
                     "tool": tool,
                     "policy_id": decision.policy_id,
                     "resource_classification": resource["classification"],
@@ -207,6 +218,7 @@ class ToolBroker:
             incident_id = self._raise_incident(
                 session_id,
                 tool=tool,
+                request_id=request_id,
                 severity=None,
                 title=None,
                 detail={
@@ -229,7 +241,7 @@ class ToolBroker:
             session_id,
             "tool.execution_started",
             {"agent": claims["agent_id"]},
-            {"tool": tool, "resource_system": resource["system"]},
+            {"request_id": request_id, "tool": tool, "resource_system": resource["system"]},
         )
         output = TOOL_IMPLEMENTATIONS[tool](args)
 
@@ -243,6 +255,7 @@ class ToolBroker:
                 "dlp.detection",
                 {"component": "gateway.detection"},
                 {
+                    "request_id": request_id,
                     "tool": tool,
                     "action": "redacted",
                     "finding_count": len(dlp_findings),
@@ -254,7 +267,8 @@ class ToolBroker:
             session_id,
             "tool.execution_completed",
             {"agent": claims["agent_id"]},
-            {"tool": tool, "output_chars": len(output), "output_redacted": redacted},
+            {"request_id": request_id, "tool": tool, "output_chars": len(output),
+             "output_redacted": redacted},
         )
         return ToolResult(
             status="completed",
@@ -271,6 +285,7 @@ class ToolBroker:
         self,
         session_id: str,
         tool: str,
+        request_id: str,
         severity: str | None,
         title: str | None,
         detail: dict,
@@ -297,6 +312,7 @@ class ToolBroker:
             {"component": "gateway.detection"},
             {
                 "incident_id": incident_id,
+                "request_id": request_id,
                 "severity": severity,
                 "title": title,
                 "denied_tool": tool,
