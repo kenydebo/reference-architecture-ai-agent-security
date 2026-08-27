@@ -1,0 +1,18 @@
+# Generated at runtime: evidence ledgers, signing keys, trust anchors
+run/
+keys/
+*.pem
+*.pub
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Environments
+.venv/
+venv/
+env/
+.env
+

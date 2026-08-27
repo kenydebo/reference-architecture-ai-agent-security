@@ -1,0 +1,4 @@
+# Ed25519 signing and verification for the evidence ledger.
+# Upper bound pinned so a future major release cannot silently change the
+# serialization API this project depends on.
+cryptography>=42.0,<50.0

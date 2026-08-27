@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Test runner only. Not required to run the demo or any scenario.
+pytest>=8.0,<9.0
