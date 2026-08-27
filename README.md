@@ -341,9 +341,10 @@ of its own tail without an independently retained chain head.
 
 ## Where to start reading
 
-The repository is deliberately small enough to read in one sitting: roughly
-2479 lines of implementation and 991 lines of tests across 35 files,
-docstrings and blank lines included.
+35 files. Around 1,600 lines of implementation logic and 625 lines of test
+logic, plus roughly 500 lines of docstrings that carry the security reasoning
+rather than restating the code. Small enough to read properly, and the reading
+order below is the one I would suggest.
 
 | You have | Read |
 |---|---|
