@@ -1,0 +1,9 @@
+STUDY BW-112 - SUMMARY RECORD (SYNTHETIC)
+Classification: internal
+
+Phase II open-label study, synthetic cohort of 240 simulated participants.
+Primary endpoint met in the modelled analysis set. No real participants,
+sites, or outcomes are represented in this file.
+
+Reference ranges and enrollment figures in this record are fabricated for
+demonstration purposes.
