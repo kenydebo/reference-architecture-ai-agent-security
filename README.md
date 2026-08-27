@@ -342,7 +342,8 @@ of its own tail without an independently retained chain head.
 ## Where to start reading
 
 The repository is deliberately small enough to read in one sitting: roughly
-1,500 lines of implementation and 540 lines of tests across 35 files.
+2479 lines of implementation and 991 lines of tests across 35 files,
+docstrings and blank lines included.
 
 | You have | Read |
 |---|---|
