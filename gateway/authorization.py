@@ -94,11 +94,42 @@ SCOPE_RULE_ID = "AI-IAM-004"
 DEFAULT_DENY_ID = "AI-DEFAULT-DENY"
 
 
+PASS = "PASS"
+DENY = "DENY"
+
+CONTROL_CAPABILITY_SCOPE = "capability_scope"
+CONTROL_DATA_CLASSIFICATION = "data_classification"
+CONTROL_ROLE_GRANT = "role_grant"
+
+
 @dataclass
 class DenyReason:
     policy_id: str
     control: str
     reason: str
+
+
+@dataclass
+class ControlEvaluation:
+    """The verdict of one authorization control, whether it passed or denied.
+
+    Recording passes as well as denials is what makes a defense-in-depth claim
+    auditable: proving a rule was load-bearing requires evidence that the other
+    controls would have permitted the action.
+    """
+
+    control: str
+    policy_id: str
+    result: str
+    detail: str
+
+    def as_dict(self) -> dict:
+        return {
+            "control": self.control,
+            "policy_id": self.policy_id,
+            "result": self.result,
+            "detail": self.detail,
+        }
 
 
 @dataclass
@@ -108,6 +139,7 @@ class Decision:
     reason: str
     evaluation_input: dict
     deny_reasons: list[DenyReason] = field(default_factory=list)
+    control_results: list[ControlEvaluation] = field(default_factory=list)
 
     @property
     def matched_policy_ids(self) -> list[str]:
@@ -116,8 +148,32 @@ class Decision:
     def denied_by(self, policy_id: str) -> bool:
         return any(d.policy_id == policy_id for d in self.deny_reasons)
 
+    def control(self, control: str) -> ControlEvaluation | None:
+        return next((c for c in self.control_results if c.control == control), None)
+
+    def control_passed(self, control: str) -> bool:
+        evaluation = self.control(control)
+        return evaluation is not None and evaluation.result == PASS
+
 
 class AuthorizationEngine:
+    """Policy decision point.
+
+    Policy configuration is injected rather than read from module globals, so a
+    scenario or a test can evaluate a deliberately misconfigured policy without
+    mutating the reference configuration that everything else uses.
+    """
+
+    def __init__(
+        self,
+        role_grants: list[dict] | None = None,
+        classification_rules: list[dict] | None = None,
+    ):
+        self.role_grants = ROLE_GRANTS if role_grants is None else role_grants
+        self.classification_rules = (
+            CLASSIFICATION_RULES if classification_rules is None else classification_rules
+        )
+
     def evaluate(self, claims: dict, tool: str, purpose: str) -> Decision:
         resource = RESOURCE_CATALOG.get(tool)
         role = claims.get("role")
@@ -131,7 +187,7 @@ class AuthorizationEngine:
             "credential_scope": scope,
         }
 
-        # 1. Unknown resource: nothing can be authorized against it.
+        # An unregistered resource cannot be authorized against.
         if resource is None:
             reason = f"unknown tool '{tool}' is not a registered resource"
             return Decision(
@@ -140,48 +196,76 @@ class AuthorizationEngine:
                 reason=reason,
                 evaluation_input=evaluation_input,
                 deny_reasons=[DenyReason(DEFAULT_DENY_ID, "default_deny", reason)],
+                control_results=[
+                    ControlEvaluation(CONTROL_ROLE_GRANT, DEFAULT_DENY_ID, DENY, reason)
+                ],
             )
 
+        classification = resource["classification"]
+        controls: list[ControlEvaluation] = []
         deny_reasons: list[DenyReason] = []
 
-        # 2. Classification rules take precedence and are evaluated first, so
-        #    they apply whether or not the capability scope was correct.
-        for rule in CLASSIFICATION_RULES:
-            if role in rule["roles"] and resource["classification"] in rule["deny_classifications"]:
-                deny_reasons.append(
-                    DenyReason(
-                        rule["id"],
-                        "data_classification",
-                        f"role '{role}' may not act on classification "
-                        f"'{resource['classification']}': {rule['description']}",
-                    )
-                )
-
-        # 3. Least privilege: the action must be inside the credential's scope.
-        if tool not in scope:
+        # --- Control 1: data classification. Deny precedence: evaluated first
+        #     so it applies regardless of how the capability scope was minted.
+        matched_rule = next(
+            (
+                r for r in self.classification_rules
+                if role in r["roles"] and classification in r["deny_classifications"]
+            ),
+            None,
+        )
+        if matched_rule:
+            detail = (
+                f"role '{role}' may not act on classification '{classification}': "
+                f"{matched_rule['description']}"
+            )
+            controls.append(
+                ControlEvaluation(CONTROL_DATA_CLASSIFICATION, matched_rule["id"], DENY, detail)
+            )
             deny_reasons.append(
-                DenyReason(
-                    SCOPE_RULE_ID,
-                    "least_privilege",
-                    f"action '{tool}' is outside the credential capability scope",
+                DenyReason(matched_rule["id"], CONTROL_DATA_CLASSIFICATION, detail)
+            )
+        else:
+            controls.append(
+                ControlEvaluation(
+                    CONTROL_DATA_CLASSIFICATION,
+                    "",
+                    PASS,
+                    f"no classification rule denies role '{role}' on '{classification}'",
                 )
             )
 
-        # 4. Explicit role grant. Scope alone is not authorization.
+        # --- Control 2: capability scope (least privilege).
+        if tool not in scope:
+            detail = f"action '{tool}' is outside the credential capability scope"
+            controls.append(ControlEvaluation(CONTROL_CAPABILITY_SCOPE, SCOPE_RULE_ID, DENY, detail))
+            deny_reasons.append(DenyReason(SCOPE_RULE_ID, CONTROL_CAPABILITY_SCOPE, detail))
+        else:
+            controls.append(
+                ControlEvaluation(
+                    CONTROL_CAPABILITY_SCOPE,
+                    SCOPE_RULE_ID,
+                    PASS,
+                    f"action '{tool}' is inside the credential capability scope",
+                )
+            )
+
+        # --- Control 3: explicit role grant. Scope alone is not authorization.
         granted = next(
-            (g for g in ROLE_GRANTS if g["role"] == role and tool in g["allow_tools"]),
+            (g for g in self.role_grants if g["role"] == role and tool in g["allow_tools"]),
             None,
         )
         if granted is None:
-            deny_reasons.append(
-                DenyReason(
-                    DEFAULT_DENY_ID,
-                    "default_deny",
-                    f"no policy grants role '{role}' the action '{tool}'",
+            detail = f"no policy grants role '{role}' the action '{tool}'"
+            controls.append(ControlEvaluation(CONTROL_ROLE_GRANT, DEFAULT_DENY_ID, DENY, detail))
+            deny_reasons.append(DenyReason(DEFAULT_DENY_ID, CONTROL_ROLE_GRANT, detail))
+        else:
+            controls.append(
+                ControlEvaluation(
+                    CONTROL_ROLE_GRANT, granted["id"], PASS, granted["description"]
                 )
             )
 
-        # 5. Deny if any rule matched, otherwise allow under the explicit grant.
         if deny_reasons:
             primary = deny_reasons[0]
             return Decision(
@@ -190,6 +274,7 @@ class AuthorizationEngine:
                 reason=primary.reason,
                 evaluation_input=evaluation_input,
                 deny_reasons=deny_reasons,
+                control_results=controls,
             )
 
         return Decision(
@@ -198,4 +283,5 @@ class AuthorizationEngine:
             reason=granted["description"],
             evaluation_input=evaluation_input,
             deny_reasons=[],
+            control_results=controls,
         )

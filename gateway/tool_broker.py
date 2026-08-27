@@ -46,19 +46,21 @@ class ToolResult:
 
 def _clinical_search(args: dict) -> str:
     return (
-        "3 study records matched in the synthetic corpus: "
-        "BW-101 (phase II, complete), BW-207 (phase I, recruiting), "
-        "BW-214 (phase II, complete)."
+        "3 synthetic study records matched:\n"
+        "BW-101 (phase II, complete)   [synthetic]\n"
+        "BW-207 (phase I, recruiting)  [synthetic]\n"
+        "BW-214 (phase II, complete)   [synthetic]"
     )
 
 
 def _documents_summarize(args: dict) -> str:
-    # The repository stub deliberately returns a document excerpt carrying a
-    # synthetic identifier, so the output-screening control has a live path.
+    # The stub deliberately returns an excerpt carrying a synthetic identifier,
+    # so the output-screening control has a live path to exercise.
     return (
-        "Summary of R&D repository documents: cohort enrollment steady across "
-        "sites; adverse-event rate within expected range. Source excerpt notes "
-        "follow-up scheduled for MRN-4471902 at the coordinating site."
+        "Synthetic summary of R&D repository documents: cohort enrollment "
+        "steady across sites; adverse-event rate within expected range. "
+        "Source excerpt notes follow-up scheduled for MRN-4471902 at the "
+        "coordinating site."
     )
 
 
@@ -76,6 +78,8 @@ def _clinical_data_export(args: dict) -> str:
     return "RESTRICTED EXPORT PAYLOAD"
 
 
+# Mock backends. Every response is fabricated; no system is contacted and no
+# real record of any kind is represented.
 TOOL_IMPLEMENTATIONS: dict[str, Callable[[dict], str]] = {
     "clinical.search": _clinical_search,
     "documents.summarize": _documents_summarize,
@@ -180,6 +184,10 @@ class ToolBroker:
                     {"policy_id": d.policy_id, "control": d.control, "reason": d.reason}
                     for d in decision.deny_reasons
                 ],
+                # Every control's verdict, passes included. Proving that one
+                # rule was load-bearing requires evidence that the others
+                # would have permitted the action.
+                "control_results": [c.as_dict() for c in decision.control_results],
                 "evaluation_input": decision.evaluation_input,
             },
         )
