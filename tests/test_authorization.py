@@ -160,3 +160,90 @@ def test_classification_rules_cover_every_restricted_resource():
     for tool, resource in RESOURCE_CATALOG.items():
         if resource["classification"].startswith("restricted"):
             assert resource["classification"] in covered, f"{tool} has no classification rule"
+
+
+# ------------------------------------- dual misconfiguration / load-bearing
+
+def _misconfigured_grants():
+    """Reference grants plus an incorrect clinical_data.export grant."""
+    from copy import deepcopy
+
+    grants = deepcopy(ROLE_GRANTS)
+    research = next(g for g in grants if g["role"] == "research_reader")
+    research["allow_tools"] = research["allow_tools"] + ["clinical_data.export"]
+    return grants
+
+
+def test_overprivileged_scope_alone_is_still_contained(authorizer):
+    """Misconfiguration 1 only: the role grant still denies."""
+    d = authorizer.evaluate(claims_for(scope=OVERBROAD_SCOPE), "clinical_data.export", "x")
+    assert d.allowed is False
+    assert d.control_passed("capability_scope") is True
+    assert d.control_passed("role_grant") is False
+    assert d.control_passed("data_classification") is False
+
+
+def test_overprivileged_role_grant_alone_is_still_contained():
+    """Misconfiguration 2 only: the capability scope still denies."""
+    engine = AuthorizationEngine(role_grants=_misconfigured_grants())
+    d = engine.evaluate(claims_for(scope=RESEARCH_SCOPE), "clinical_data.export", "x")
+    assert d.allowed is False
+    assert d.control_passed("role_grant") is True
+    assert d.control_passed("capability_scope") is False
+
+
+def test_dual_misconfiguration_leaves_only_the_classification_rule():
+    """Both ordinary controls permit; only classification denies."""
+    engine = AuthorizationEngine(role_grants=_misconfigured_grants())
+    d = engine.evaluate(claims_for(scope=OVERBROAD_SCOPE), "clinical_data.export", "x")
+    assert d.allowed is False
+    assert d.control_passed("capability_scope") is True
+    assert d.control_passed("role_grant") is True
+    assert d.control_passed("data_classification") is False
+    assert d.matched_policy_ids == ["AI-DATA-004"]
+
+
+def test_classification_backstop_is_load_bearing_under_dual_misconfiguration():
+    """The counterfactual, not merely the presence of the rule.
+
+    Same request, same misconfigured policy. With the classification rule the
+    request is denied; with it removed the request is authorized. That is what
+    makes AI-DATA-004 the control responsible for containment here.
+    """
+    grants = _misconfigured_grants()
+    claims = claims_for(scope=OVERBROAD_SCOPE)
+
+    with_rule = AuthorizationEngine(role_grants=grants)
+    without_rule = AuthorizationEngine(role_grants=grants, classification_rules=[])
+
+    denied = with_rule.evaluate(claims, "clinical_data.export", "x")
+    allowed = without_rule.evaluate(claims, "clinical_data.export", "x")
+
+    assert denied.allowed is False, "classification rule enabled must DENY"
+    assert allowed.allowed is True, "classification rule removed must ALLOW"
+    assert denied.denied_by("AI-DATA-004")
+
+
+def test_removing_the_classification_rule_does_not_open_correctly_scoped_paths():
+    """The counterfactual is specific: normal configuration stays contained."""
+    without_rule = AuthorizationEngine(classification_rules=[])
+    d = without_rule.evaluate(claims_for(scope=RESEARCH_SCOPE), "clinical_data.export", "x")
+    assert d.allowed is False  # scope and role grant still deny
+
+
+def test_injected_policy_does_not_mutate_the_reference_configuration():
+    """Scenario misconfiguration must not leak into the default engine."""
+    AuthorizationEngine(role_grants=_misconfigured_grants())
+    reference = next(g for g in ROLE_GRANTS if g["role"] == "research_reader")
+    assert "clinical_data.export" not in reference["allow_tools"]
+    assert AuthorizationEngine().evaluate(
+        claims_for(scope=OVERBROAD_SCOPE), "clinical_data.export", "x"
+    ).control_passed("role_grant") is False
+
+
+def test_every_control_records_a_verdict(authorizer):
+    """Passes are recorded too; a defense-in-depth claim needs them."""
+    d = authorizer.evaluate(claims_for(scope=RESEARCH_SCOPE), "clinical.search", "x")
+    controls = {c.control for c in d.control_results}
+    assert controls == {"capability_scope", "data_classification", "role_grant"}
+    assert all(c.result == "PASS" for c in d.control_results)

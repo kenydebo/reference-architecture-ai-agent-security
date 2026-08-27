@@ -11,6 +11,19 @@ import json
 from assurance.controls import FAIL, NOT_TESTED, PASS, assess
 
 
+def _misconfigured_broker(harness):
+    """Point the harness broker at a scenario-local misconfigured policy."""
+    from copy import deepcopy
+
+    from gateway.authorization import ROLE_GRANTS, AuthorizationEngine
+
+    grants = deepcopy(ROLE_GRANTS)
+    research = next(g for g in grants if g["role"] == "research_reader")
+    research["allow_tools"] = research["allow_tools"] + ["clinical_data.export"]
+    harness.broker.authorizer = AuthorizationEngine(role_grants=grants)
+    return harness
+
+
 def _result(results, control_id):
     return next(r for r in results if r.control_id == control_id)
 
@@ -99,21 +112,23 @@ def test_empty_session_does_not_pass_controls(harness):
 
 # --------------------------------------------------------- positive states
 
-def test_classification_backstop_control_requires_the_scope_check_to_pass(harness):
-    """AC-05 must only pass when scope did not deny -- otherwise it proves nothing."""
+def test_classification_backstop_control_requires_every_other_control_to_permit(harness):
+    """AC-05 must not pass while any other control would still have denied.
+
+    Overbroad scope alone is not enough: the role grant would have contained
+    the request anyway, so the classification rule was not load-bearing.
+    """
     normal = harness.session()
     normal.request_tool("clinical_data.export", purpose="x")
     normal.close()
     assert _result(_assess(harness, normal), "AC-05").result == NOT_TESTED
 
-    overprivileged = harness.session(
+    scope_only = harness.session(
         scope_override=["clinical.search", "documents.summarize", "clinical_data.export"]
     )
-    overprivileged.request_tool("clinical_data.export", purpose="x")
-    overprivileged.close()
-    ac05 = _result(_assess(harness, overprivileged), "AC-05")
-    assert ac05.result == PASS
-    assert "AI-DATA-004" in ac05.detail
+    scope_only.request_tool("clinical_data.export", purpose="x")
+    scope_only.close()
+    assert _result(_assess(harness, scope_only), "AC-05").result == NOT_TESTED
 
 
 def test_injection_detection_control_links_to_a_retrieved_document(harness):
@@ -202,7 +217,10 @@ def test_assess_accepts_multiple_sessions(harness):
     a.retrieve("trial results")
     a.request_tool("clinical_data.export", purpose="x")
     a.close()
-    b = harness.session(scope_override=["clinical_data.export"])
+    _misconfigured_broker(harness)
+    b = harness.session(
+        scope_override=["clinical.search", "documents.summarize", "clinical_data.export"]
+    )
     b.request_tool("clinical_data.export", purpose="y")
     b.close()
 
@@ -210,3 +228,62 @@ def test_assess_accepts_multiple_sessions(harness):
     assert _result(combined, "AC-04").result == PASS
     assert _result(combined, "AC-05").result == PASS
     assert _result(combined, "AC-06").result == PASS
+
+
+# ------------------------------------------- AC-05 load-bearing evidence
+
+def test_ac05_not_tested_when_default_deny_would_still_contain_the_request(harness):
+    """Overbroad scope alone does not prove the classification rule mattered.
+
+    The role grant would have denied this request regardless, so AC-05 must not
+    claim the classification rule was load-bearing.
+    """
+    session = harness.session(scope_override=["clinical_data.export"])
+    session.request_tool("clinical_data.export", purpose="x")
+    session.close()
+
+    ac05 = _result(_assess(harness, session), "AC-05")
+    assert ac05.result == NOT_TESTED
+    assert "would have denied" in ac05.detail
+
+
+def test_ac05_not_tested_when_scope_also_denies(harness):
+    session = harness.session()
+    session.request_tool("clinical_data.export", purpose="x")
+    session.close()
+    assert _result(_assess(harness, session), "AC-05").result == NOT_TESTED
+
+
+def test_ac05_passes_only_under_dual_misconfiguration(harness):
+    """Scope permits, role grant permits, classification denies, nothing ran."""
+    _misconfigured_broker(harness)
+    session = harness.session(
+        scope_override=["clinical.search", "documents.summarize", "clinical_data.export"]
+    )
+    result = session.request_tool("clinical_data.export", purpose="x")
+    session.close()
+
+    assert result.status == "denied"
+    assert result.decision.control_passed("capability_scope") is True
+    assert result.decision.control_passed("role_grant") is True
+
+    ac05 = _result(_assess(harness, session), "AC-05")
+    assert ac05.result == PASS
+    assert "AI-DATA-004" in ac05.detail
+
+
+def test_evidence_records_control_passes_not_only_denials(harness):
+    """AC-05 is only checkable because passing verdicts are recorded."""
+    session = harness.session()
+    session.request_tool("clinical.search", purpose="x")
+    session.close()
+    decision = next(
+        e for e in harness.ledger.session(session.session_id)
+        if e["event_type"] == "policy.decision"
+    )
+    controls = {c["control"]: c["result"] for c in decision["payload"]["control_results"]}
+    assert controls == {
+        "capability_scope": "PASS",
+        "data_classification": "PASS",
+        "role_grant": "PASS",
+    }

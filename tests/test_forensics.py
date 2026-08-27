@@ -130,7 +130,7 @@ def test_wholesale_rewrite_with_a_replacement_key_is_detected(harness):
 
     An attacker who controls the evidence directory rewrites the history and
     re-signs every entry with a key they generated. Verification against the
-    independently held trust anchor must reject it. Verification that sourced
+    separately supplied trust anchor must reject it. Verification that sourced
     its key from beside the evidence would report this history as valid.
     """
     _populate(harness)
