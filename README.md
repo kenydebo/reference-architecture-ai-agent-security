@@ -72,7 +72,7 @@ triage; authorization provides containment.
 ## Quick start
 
 ```bash
-git clone https://github.com/<your-username>/keny-ai-agent-security-reference-architecture.git
+git clone https://github.com/kenydebo/keny-ai-agent-security-reference-architecture.git
 cd keny-ai-agent-security-reference-architecture
 
 python3 -m venv .venv
